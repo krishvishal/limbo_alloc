@@ -2,7 +2,6 @@ use std::{
     cell::Cell,
     mem::transmute,
     ops::{Deref, DerefMut},
-    pin::Pin,
     ptr::NonNull,
 };
 
@@ -26,9 +25,7 @@ pub struct LimboAllocator {
 pub struct AllocatorGuard {}
 
 impl Drop for AllocatorGuard {
-    fn drop(&mut self) {
-        // CURRENT_ALLOCATOR.set();
-    }
+    fn drop(&mut self) {}
 }
 
 impl WrapAllocator {
@@ -195,5 +192,205 @@ impl Deref for WrapAllocator {
 impl DerefMut for WrapAllocator {
     fn deref_mut(&mut self) -> &mut Bump {
         &mut self.bump
+    }
+}
+
+#[repr(transparent)]
+pub struct Box<T: ?Sized>(pub(crate) boxed::Box<T, LimboAllocator>);
+
+impl<T> Box<T> {
+    #[inline(always)]
+    pub fn new(value: T) -> Self {
+        Self::new_in(value, LimboAllocator::new())
+    }
+
+    #[inline(always)]
+    pub fn new_in(value: T, alloc: LimboAllocator) -> Self {
+        Self(boxed::Box::new_in(value, alloc))
+    }
+
+    pub fn unbox(self) -> T {
+        boxed::Box::into_inner(self.0)
+    }
+}
+
+impl<T: ?Sized> Box<T> {
+    pub unsafe fn from_raw(raw: *mut T) -> Self {
+        Self(boxed::Box::from_raw_in(raw, LimboAllocator::new()))
+    }
+
+    pub fn into_raw(b: Self) -> *mut T {
+        boxed::Box::into_raw(b.0)
+    }
+}
+
+impl<T: ?Sized> Deref for Box<T> {
+    type Target = T;
+
+    #[inline(always)]
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T: ?Sized> DerefMut for Box<T> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
+#[repr(transparent)]
+pub struct Vec<T>(allocator_api2::vec::Vec<T, LimboAllocator>);
+
+impl<T> Vec<T> {
+    #[inline(always)]
+    pub fn new() -> Self {
+        Self::new_in(LimboAllocator::new())
+    }
+
+    #[inline(always)]
+    pub fn new_in(alloc: LimboAllocator) -> Self {
+        Self(allocator_api2::vec::Vec::new_in(alloc))
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self::with_capacity_in(capacity, LimboAllocator::new())
+    }
+
+    pub fn with_capacity_in(capacity: usize, alloc: LimboAllocator) -> Self {
+        Self(allocator_api2::vec::Vec::with_capacity_in(capacity, alloc))
+    }
+
+    pub fn into_boxed_slice(self) -> Box<[T]> {
+        Box(self.0.into_boxed_slice())
+    }
+
+    pub fn leak<'a>(self) -> &'a mut [T]
+    where
+        T: 'a,
+    {
+        self.0.leak()
+    }
+
+    pub unsafe fn from_raw_parts(ptr: *mut T, length: usize, capacity: usize) -> Self {
+        Self(allocator_api2::vec::Vec::from_raw_parts_in(
+            ptr,
+            length,
+            capacity,
+            LimboAllocator::new(),
+        ))
+    }
+}
+
+impl<T> Default for Vec<T> {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> Deref for Vec<T> {
+    type Target = allocator_api2::vec::Vec<T, LimboAllocator>;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Vec<T> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T> FromIterator<T> for Vec<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let iter = iter.into_iter();
+        let mut vec = Self::with_capacity(iter.size_hint().0);
+        vec.extend(iter);
+        vec
+    }
+}
+
+impl<T> IntoIterator for Vec<T> {
+    type Item = T;
+    type IntoIter = allocator_api2::vec::IntoIter<T, LimboAllocator>;
+
+    #[inline(always)]
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Vec<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a mut Vec<T> {
+    type Item = &'a mut T;
+    type IntoIter = std::slice::IterMut<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
+    }
+}
+
+impl<T> Extend<T> for Vec<T> {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        self.0.extend(iter)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_vec_basic_operations() {
+        let allocator = WrapAllocator::new();
+        let _guard = unsafe { allocator.guard() };
+
+        let mut vec = Vec::new();
+        vec.push(1);
+        vec.push(2);
+        vec.push(3);
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec[0], 1);
+        assert_eq!(vec[1], 2);
+        assert_eq!(vec[2], 3);
+    }
+    #[test]
+    fn test_box() {
+        let allocator = WrapAllocator::new();
+        let boxed = {
+            let _guard = unsafe { allocator.guard() };
+            Box::new(42)
+        };
+        assert_eq!(*boxed, 42);
+    }
+
+    #[test]
+    fn test_vec_iteration() {
+        let allocator = WrapAllocator::new();
+        let _guard = unsafe { allocator.guard() };
+
+        let mut vec = Vec::new();
+        vec.extend(0..3);
+
+        let sum: i32 = vec.clone().into_iter().sum();
+        assert_eq!(sum, 3);
+
+        let sum: i32 = vec.iter().sum();
+        assert_eq!(sum, 3);
+
+        let sum: i32 = vec.iter_mut().map(|x| *x).sum();
+        assert_eq!(sum, 3);
     }
 }
