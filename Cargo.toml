@@ -1,0 +1,8 @@
+[package]
+name = "limbo_alloc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bumpalo = "3"
+allocator-api2 = "0.2.21"
