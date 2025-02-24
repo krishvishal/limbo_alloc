@@ -541,4 +541,46 @@ mod tests {
         let sum: i32 = vec.iter_mut().map(|x| *x).sum();
         assert_eq!(sum, 3);
     }
+
+    struct TestParser<'a> {
+        some_reference: &'a str,
+        vector: Vec<String>,
+        _allocator: WrapAllocator,
+        _guard: AllocatorGuard,
+    }
+
+    impl<'a> TestParser<'a> {
+        fn new(reference: &'a str) -> Self {
+            let allocator = WrapAllocator::new();
+            
+            let guard = unsafe { allocator.guard() };
+            
+            let mut vector = Vec::new();
+            
+            vector.push(String::from("We are"));
+            vector.push(String::from("So Back"));
+            
+            TestParser {
+                some_reference: reference,
+                vector,
+                _allocator: allocator,
+                _guard: guard,
+            }
+        }
+        
+        fn add_item(&mut self, item: String) {
+            self.vector.push(item);
+        }
+    }
+
+    #[test]
+    fn test_allocator_with_different_lifetimes() {
+        {
+            let text = String::from("test string");       
+            {
+                let mut parser = TestParser::new(&text);
+                parser.add_item(String::from("Additional item"));
+            }
+        }
+    }    
 }
