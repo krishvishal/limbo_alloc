@@ -1,4 +1,8 @@
 use std::{
+    borrow::{Borrow, BorrowMut},
+    fmt,
+};
+use std::{
     cell::Cell,
     mem::transmute,
     ops::{Deref, DerefMut},
@@ -25,11 +29,15 @@ pub struct LimboAllocator {
 pub struct AllocatorGuard {}
 
 impl Drop for AllocatorGuard {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        println!("dropping!!!");
+        CURRENT_ALLOCATOR.set(None);
+    }
 }
 
 impl WrapAllocator {
     pub fn new() -> Self {
+        println!("new allocator!!!");
         Self { bump: Bump::new() }
     }
 
@@ -62,6 +70,7 @@ impl Default for LimboAllocator {
 
 unsafe impl Allocator for LimboAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        println!("allocate triggered!!!");
         if let Some(alloc) = self.allocator {
             let ptr = alloc.bump.alloc_layout(layout);
 
@@ -103,6 +112,7 @@ unsafe impl Allocator for LimboAllocator {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
+        println!("growing!!!!!!!!!!");
         match self.allocator {
             Some(allocator) => {
                 let new_ptr = allocator.bump.alloc_layout(new_layout);
@@ -196,6 +206,7 @@ impl DerefMut for WrapAllocator {
 }
 
 #[repr(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Box<T: ?Sized>(pub(crate) boxed::Box<T, LimboAllocator>);
 
 impl<T> Box<T> {
@@ -240,7 +251,83 @@ impl<T: ?Sized> DerefMut for Box<T> {
     }
 }
 
+impl<T> From<T> for Box<T> {
+    #[inline(always)]
+    fn from(v: T) -> Self {
+        Box::new(v)
+    }
+}
+
+impl<T: ?Sized> From<allocator_api2::boxed::Box<T, LimboAllocator>> for Box<T> {
+    #[inline(always)]
+    fn from(v: allocator_api2::boxed::Box<T, LimboAllocator>) -> Self {
+        Box(v)
+    }
+}
+
+impl<T: ?Sized> AsRef<T> for Box<T> {
+    fn as_ref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T: ?Sized> AsMut<T> for Box<T> {
+    fn as_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
+impl<T: ?Sized> Borrow<T> for Box<T> {
+    fn borrow(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T: ?Sized> BorrowMut<T> for Box<T> {
+    fn borrow_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
+impl<T: ?Sized + Iterator> Iterator for Box<T> {
+    type Item = T::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        (**self).next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (**self).size_hint()
+    }
+}
+
+impl<T: ?Sized + DoubleEndedIterator> DoubleEndedIterator for Box<T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        (**self).next_back()
+    }
+}
+
+impl<T: ?Sized + ExactSizeIterator> ExactSizeIterator for Box<T> {
+    fn len(&self) -> usize {
+        (**self).len()
+    }
+}
+
+
+impl<T: ?Sized> fmt::Pointer for Box<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Pointer::fmt(&(&**self as *const T), f)
+    }
+}
+
+impl<T: ?Sized + Default> Default for Box<T> {
+    fn default() -> Self {
+        Box::new(T::default())
+    }
+}
+
 #[repr(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Vec<T>(allocator_api2::vec::Vec<T, LimboAllocator>);
 
 impl<T> Vec<T> {
@@ -280,6 +367,54 @@ impl<T> Vec<T> {
             capacity,
             LimboAllocator::new(),
         ))
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    #[inline(always)]
+    pub fn as_slice(&self) -> &[T] {
+        self.0.as_slice()
+    }
+
+    #[inline(always)]
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        self.0.as_mut_slice()
+    }
+
+    #[inline(always)]
+    pub fn push(&mut self, value: T) {
+        self.0.push(value)
+    }
+
+    #[inline(always)]
+    pub fn reserve(&mut self, additional: usize) {
+        self.0.reserve(additional)
+    }
+
+    #[inline(always)]
+    pub fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
+
+    #[inline(always)]
+    pub fn shrink_to_fit(&mut self) {
+        self.0.shrink_to_fit()
+    }
+
+    #[inline(always)]
+    pub fn as_ptr(&self) -> *const T {
+        self.0.as_ptr()
+    }
+
+    #[inline(always)]
+    pub fn as_mut_ptr(&mut self) -> *mut T {
+        self.0.as_mut_ptr()
     }
 }
 
@@ -347,6 +482,19 @@ impl<T> Extend<T> for Vec<T> {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         self.0.extend(iter)
     }
+}
+
+#[macro_export]
+macro_rules! vec {
+    () => {
+        $crate::Vec::new()
+    };
+    ($elem:expr; $n:expr) => {
+        $crate::Vec::from_iter(std::iter::repeat($elem).take($n))
+    };
+    ($($x:expr),+ $(,)?) => {
+        $crate::Vec::from_iter([$($x),+])
+    };
 }
 
 #[cfg(test)]
