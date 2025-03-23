@@ -30,14 +30,12 @@ pub struct AllocatorGuard {}
 
 impl Drop for AllocatorGuard {
     fn drop(&mut self) {
-        println!("dropping!!!");
         CURRENT_ALLOCATOR.set(None);
     }
 }
 
 impl WrapAllocator {
     pub fn new() -> Self {
-        println!("new allocator!!!");
         Self { bump: Bump::new() }
     }
 
@@ -70,7 +68,6 @@ impl Default for LimboAllocator {
 
 unsafe impl Allocator for LimboAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        println!("allocate triggered!!!");
         if let Some(alloc) = self.allocator {
             let ptr = alloc.bump.alloc_layout(layout);
 
@@ -112,7 +109,6 @@ unsafe impl Allocator for LimboAllocator {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        println!("growing!!!!!!!!!!");
         match self.allocator {
             Some(allocator) => {
                 let new_ptr = allocator.bump.alloc_layout(new_layout);
@@ -312,7 +308,6 @@ impl<T: ?Sized + ExactSizeIterator> ExactSizeIterator for Box<T> {
         (**self).len()
     }
 }
-
 
 impl<T: ?Sized> fmt::Pointer for Box<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -545,29 +540,25 @@ mod tests {
     struct TestParser<'a> {
         some_reference: &'a str,
         vector: Vec<String>,
-        _allocator: WrapAllocator,
+        _allocator: &'a WrapAllocator,
         _guard: AllocatorGuard,
     }
 
     impl<'a> TestParser<'a> {
-        fn new(reference: &'a str) -> Self {
-            let allocator = WrapAllocator::new();
-            
-            let guard = unsafe { allocator.guard() };
-            
+        fn new(reference: &'a str, allocator: &'a WrapAllocator, guard: AllocatorGuard) -> Self {
             let mut vector = Vec::new();
-            
+
             vector.push(String::from("We are"));
             vector.push(String::from("So Back"));
-            
+
             TestParser {
                 some_reference: reference,
                 vector,
-                _allocator: allocator,
+                _allocator: &allocator,
                 _guard: guard,
             }
         }
-        
+
         fn add_item(&mut self, item: String) {
             self.vector.push(item);
         }
@@ -576,11 +567,15 @@ mod tests {
     #[test]
     fn test_allocator_with_different_lifetimes() {
         {
-            let text = String::from("test string");       
+            let text = String::from("test string");
             {
-                let mut parser = TestParser::new(&text);
+                let allocator: WrapAllocator = WrapAllocator::new();
+
+                let guard = unsafe { allocator.guard() };
+
+                let mut parser = TestParser::new(&text, &allocator, guard);
                 parser.add_item(String::from("Additional item"));
             }
         }
-    }    
+    }
 }
