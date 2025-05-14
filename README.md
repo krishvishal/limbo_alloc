@@ -1,5 +1,41 @@
 # limbo_alloc
 
+A wrapper around `Bumpalo` bump allocator that eliminates lifetime annotations.
+
+## Overview
+
+`limbo_alloc` is a wrapper around the bumpalo crate that provides allocation utilities without requiring lifetime annotations on your own types. It offers simplified Box and Vec implementations that work with a thread-local bump allocator system.
+
+
+## Key Features
+
+- Lifetime-free API: Use Box and Vec without explicit lifetime annotations in your own types
+- Thread-local allocation: Uses a thread-local store to maintain allocator references
+- Ease of use: Familiar API that mirrors standard Rust collections
+
+## Usage
+
+```rust
+use limbo_alloc::{Box, Vec, WrapAllocator};
+
+fn main() {
+    // Create an allocator
+    let allocator = WrapAllocator::new();
+    
+    // Set up the thread-local allocator reference
+    // The guard automatically cleans up when dropped
+    let _guard = unsafe { allocator.guard() };
+    
+    // Use Box and Vec without explicit lifetime annotations
+    let mut vec = Vec::new();
+    vec.push(Box::new(42));
+    vec.push(Box::new(43));
+    
+    // All allocations will be freed when the allocator is dropped
+}
+```
+
+## Benchmark
 
 ```
 std_alloc_1000          time:   [79.989 µs 81.518 µs 83.117 µs]
