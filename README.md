@@ -6,6 +6,8 @@ A wrapper around `Bumpalo` bump allocator that eliminates lifetime annotations.
 
 `limbo_alloc` is a wrapper around the bumpalo crate that provides allocation utilities without requiring lifetime annotations on your own types. It offers simplified Box and Vec implementations that work with a thread-local bump allocator system.
 
+Note: I wanted to add arena allocator support for limbo parser for increased performance. But adding lifetime annotations everywhere is tiersome. So this was the solution for that. 
+
 
 ## Key Features
 
